@@ -16,6 +16,8 @@ import com.facebook.react.bridge.WritableNativeMap
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.io.InputStream
+import java.net.URL
 import java.util.Random
 
 class PdfThumbnailModule(reactContext: ReactApplicationContext) :
@@ -84,8 +86,52 @@ class PdfThumbnailModule(reactContext: ReactApplicationContext) :
     } else if (filePath.startsWith("/")) {
       val file = File(filePath)
       return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+    } else if (filePath.startsWith("http://") || filePath.startsWith("https://")) {
+      // Handle remote URLs by downloading to cache first
+      return downloadAndGetParcelFileDescriptor(filePath)
     }
     return null
+  }
+
+  private fun downloadAndGetParcelFileDescriptor(url: String): ParcelFileDescriptor? {
+    try {
+      // Create cache directory if it doesn't exist
+      val cacheDir = File(reactApplicationContext.cacheDir, "pdf_cache")
+      if (!cacheDir.exists()) {
+        cacheDir.mkdirs()
+      }
+
+      // Generate unique filename from URL
+      val filename = url.split("/").lastOrNull() ?: "document.pdf"
+      val localFile = File(cacheDir, filename)
+
+      // Check if file already exists in cache
+      if (localFile.exists()) {
+        return ParcelFileDescriptor.open(localFile, ParcelFileDescriptor.MODE_READ_ONLY)
+      }
+
+      // Download the file
+      val connection = URL(url).openConnection()
+      connection.connectTimeout = 30000
+      connection.readTimeout = 30000
+      
+      val inputStream: InputStream = connection.getInputStream()
+      val outputStream = FileOutputStream(localFile)
+      
+      val buffer = ByteArray(4096)
+      var bytesRead: Int
+      while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+        outputStream.write(buffer, 0, bytesRead)
+      }
+      
+      inputStream.close()
+      outputStream.close()
+      
+      return ParcelFileDescriptor.open(localFile, ParcelFileDescriptor.MODE_READ_ONLY)
+    } catch (e: Exception) {
+      e.printStackTrace()
+      return null
+    }
   }
 
   private fun renderPage(pdfRenderer: PdfRenderer, page: Int, filePath: String, quality: Int): WritableNativeMap {
